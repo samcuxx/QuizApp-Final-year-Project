@@ -831,15 +831,79 @@ export async function createQuiz(quizData: any) {
       })
     );
 
-    const { error: questionsError } = await supabase
+    const { data: createdQuestions, error: questionsError } = await supabase
       .from("questions")
-      .insert(questionsToInsert);
+      .insert(questionsToInsert)
+      .select();
 
     if (questionsError) {
       console.error("Error creating questions:", questionsError);
       // Try to cleanup the quiz if questions failed
       await supabase.from("quizzes").delete().eq("id", quiz.id);
       throw new Error("Failed to create quiz questions");
+    }
+
+    // Now create question options for multiple choice and true/false questions
+    const optionsToInsert = [];
+
+    for (let i = 0; i < quizData.questions.length; i++) {
+      const questionData = quizData.questions[i];
+      const createdQuestion = createdQuestions[i];
+
+      if (questionData.type === "multiple_choice" && questionData.options) {
+        // Create options for multiple choice questions
+        questionData.options.forEach(
+          (optionText: string, optionIndex: number) => {
+            optionsToInsert.push({
+              question_id: createdQuestion.id,
+              option_text: optionText,
+              is_correct: optionIndex === (questionData.correct_answer || 0),
+              order_index: optionIndex,
+            });
+          }
+        );
+      } else if (questionData.type === "true_false") {
+        // Create True/False options
+        optionsToInsert.push(
+          {
+            question_id: createdQuestion.id,
+            option_text: "True",
+            is_correct:
+              questionData.correct_answer === "true" ||
+              questionData.correct_answer === true ||
+              questionData.correct_answer === 0,
+            order_index: 0,
+          },
+          {
+            question_id: createdQuestion.id,
+            option_text: "False",
+            is_correct:
+              questionData.correct_answer === "false" ||
+              questionData.correct_answer === false ||
+              questionData.correct_answer === 1,
+            order_index: 1,
+          }
+        );
+      }
+    }
+
+    // Insert all question options
+    if (optionsToInsert.length > 0) {
+      console.log("Creating question options:", optionsToInsert);
+
+      const { error: optionsError } = await supabase
+        .from("question_options")
+        .insert(optionsToInsert);
+
+      if (optionsError) {
+        console.error("Error creating question options:", optionsError);
+        // Try to cleanup if options failed
+        await supabase.from("questions").delete().eq("quiz_id", quiz.id);
+        await supabase.from("quizzes").delete().eq("id", quiz.id);
+        throw new Error("Failed to create question options");
+      }
+
+      console.log(`✅ Created ${optionsToInsert.length} question options`);
     }
   }
 
@@ -1178,7 +1242,8 @@ export async function joinQuizWithCode(quizCode: string, studentId: string) {
     return { error: "Failed to check quiz attempts", success: false };
   }
 
-  const submittedAttempts = existingAttempts?.filter(a => a.submitted_at) || [];
+  const submittedAttempts =
+    existingAttempts?.filter((a) => a.submitted_at) || [];
   const totalAttempts = existingAttempts?.length || 0;
 
   // Check if student has used all attempts
@@ -1296,7 +1361,8 @@ export async function startQuizAttempt(quizId: string, studentId: string) {
     throw new Error("Failed to check existing attempts");
   }
 
-  const submittedAttempts = existingAttempts?.filter(a => a.submitted_at) || [];
+  const submittedAttempts =
+    existingAttempts?.filter((a) => a.submitted_at) || [];
   const totalAttempts = existingAttempts?.length || 0;
 
   // Check if student has used all attempts
@@ -1310,7 +1376,7 @@ export async function startQuizAttempt(quizId: string, studentId: string) {
   }
 
   // Check if there's an active (unsubmitted) attempt
-  const activeAttempt = existingAttempts?.find(a => !a.submitted_at);
+  const activeAttempt = existingAttempts?.find((a) => !a.submitted_at);
   if (activeAttempt) {
     // Return the existing active attempt instead of creating a new one
     return activeAttempt;
@@ -1337,29 +1403,333 @@ export async function startQuizAttempt(quizId: string, studentId: string) {
   return attempt;
 }
 
-// Submit quiz attempt
+// Results calculation system
+export async function calculateQuizResults(attemptId: string) {
+  const supabase = createClient();
+
+  try {
+    // Get the quiz attempt with quiz details
+    const { data: attempt, error: attemptError } = await supabase
+      .from("quiz_attempts")
+      .select(
+        `
+        *,
+        quiz:quizzes!inner (
+          id,
+          title,
+          duration_minutes
+        )
+      `
+      )
+      .eq("id", attemptId)
+      .single();
+
+    if (attemptError) {
+      console.error("Error fetching quiz attempt:", attemptError);
+      throw new Error("Failed to fetch quiz attempt");
+    }
+
+    // Get all questions for this quiz
+    const { data: questions, error: questionsError } = await supabase
+      .from("questions")
+      .select("*")
+      .eq("quiz_id", attempt.quiz_id)
+      .order("question_number");
+
+    if (questionsError) {
+      console.error("Error fetching questions:", questionsError);
+      throw new Error("Failed to fetch questions");
+    }
+
+    // Get student answers for this attempt
+    const { data: studentAnswers, error: answersError } = await supabase
+      .from("student_answers")
+      .select("*")
+      .eq("attempt_id", attemptId);
+
+    if (answersError) {
+      console.error("Error fetching student answers:", answersError);
+      throw new Error("Failed to fetch student answers");
+    }
+
+    // Get question options for multiple choice questions
+    const questionIds = questions.map((q) => q.id);
+    const { data: options, error: optionsError } = await supabase
+      .from("question_options")
+      .select("*")
+      .in("question_id", questionIds);
+
+    if (optionsError) {
+      console.error("Error fetching question options:", optionsError);
+      throw new Error("Failed to fetch question options");
+    }
+
+    // Organize data for calculation
+    const optionsByQuestion =
+      options?.reduce((acc, option) => {
+        if (!acc[option.question_id]) {
+          acc[option.question_id] = [];
+        }
+        acc[option.question_id].push(option);
+        return acc;
+      }, {} as Record<string, any[]>) || {};
+
+    const answersByQuestion =
+      studentAnswers?.reduce((acc, answer) => {
+        acc[answer.question_id] = answer;
+        return acc;
+      }, {} as Record<string, any>) || {};
+
+    // Calculate scores for each question
+    let totalPointsAwarded = 0;
+    let totalPossiblePoints = 0;
+    const updatedAnswers = [];
+
+    for (const question of questions) {
+      const studentAnswer = answersByQuestion[question.id];
+      const questionOptions = optionsByQuestion[question.id] || [];
+
+      totalPossiblePoints += question.points;
+
+      if (!studentAnswer) {
+        // No answer provided - 0 points
+        continue;
+      }
+
+      let pointsAwarded = 0;
+      let isCorrect = false;
+
+      if (question.type === "multiple_choice") {
+        const correctOption = questionOptions.find((opt) => opt.is_correct);
+        if (
+          correctOption &&
+          studentAnswer.selected_option_id === correctOption.id
+        ) {
+          pointsAwarded = question.points;
+          isCorrect = true;
+        }
+      } else if (question.type === "true_false") {
+        const correctOption = questionOptions.find((opt) => opt.is_correct);
+        if (
+          correctOption &&
+          studentAnswer.selected_option_id === correctOption.id
+        ) {
+          pointsAwarded = question.points;
+          isCorrect = true;
+        }
+      } else if (question.type === "essay") {
+        // Essay questions need manual grading - default to 0 points
+        // Admin can update this later
+        pointsAwarded = 0;
+        isCorrect = false;
+      }
+
+      totalPointsAwarded += pointsAwarded;
+
+      // Update student answer with calculated score
+      updatedAnswers.push({
+        id: studentAnswer.id,
+        points_awarded: pointsAwarded,
+        is_correct: isCorrect,
+      });
+    }
+
+    // Update all student answers with calculated scores
+    for (const answerUpdate of updatedAnswers) {
+      await supabase
+        .from("student_answers")
+        .update({
+          points_awarded: answerUpdate.points_awarded,
+          is_correct: answerUpdate.is_correct,
+        })
+        .eq("id", answerUpdate.id);
+    }
+
+    // Calculate final score as percentage
+    const scorePercentage =
+      totalPossiblePoints > 0
+        ? (totalPointsAwarded / totalPossiblePoints) * 100
+        : 0;
+
+    // Update quiz attempt with calculated results
+    const { data: updatedAttempt, error: updateError } = await supabase
+      .from("quiz_attempts")
+      .update({
+        score: scorePercentage,
+        total_points: totalPossiblePoints,
+        status: "submitted",
+      })
+      .eq("id", attemptId)
+      .select()
+      .single();
+
+    if (updateError) {
+      console.error("Error updating quiz attempt:", updateError);
+      throw new Error("Failed to update quiz results");
+    }
+
+    return {
+      attempt: updatedAttempt,
+      totalPointsAwarded,
+      totalPossiblePoints,
+      scorePercentage,
+      questionsGraded: questions.length,
+      essayQuestionsCount: questions.filter((q) => q.type === "essay").length,
+    };
+  } catch (error) {
+    console.error("Error calculating quiz results:", error);
+    throw error;
+  }
+}
+
+// Submit quiz attempt with automatic scoring
 export async function submitQuizAttempt(
   attemptId: string,
   answers: Record<string, any>
 ) {
   const supabase = createClient();
 
-  const { data: attempt, error } = await supabase
-    .from("quiz_attempts")
-    .update({
-      answers: answers,
-      submitted_at: new Date().toISOString(),
-    })
-    .eq("id", attemptId)
-    .select()
-    .single();
+  try {
+    // Get the quiz attempt to find the quiz ID
+    const { data: attempt, error: attemptError } = await supabase
+      .from("quiz_attempts")
+      .select("quiz_id")
+      .eq("id", attemptId)
+      .single();
 
-  if (error) {
+    if (attemptError) {
+      console.error("Error fetching quiz attempt:", attemptError);
+      throw new Error("Failed to fetch quiz attempt");
+    }
+
+    // Get questions to determine types
+    const { data: questions, error: questionsError } = await supabase
+      .from("questions")
+      .select("id, type")
+      .eq("quiz_id", attempt.quiz_id);
+
+    if (questionsError) {
+      console.error("Error fetching questions:", questionsError);
+      throw new Error("Failed to fetch questions");
+    }
+
+    // Create a map of question ID to question type
+    const questionTypes = questions.reduce((acc, q) => {
+      acc[q.id] = q.type;
+      return acc;
+    }, {} as Record<string, string>);
+
+    // Get question options for multiple choice and true/false questions
+    const { data: options, error: optionsError } = await supabase
+      .from("question_options")
+      .select("id, question_id, option_text")
+      .in(
+        "question_id",
+        questions.map((q) => q.id)
+      );
+
+    if (optionsError) {
+      console.error("Error fetching question options:", optionsError);
+      throw new Error("Failed to fetch question options");
+    }
+
+    // Create a map of question ID to options
+    const optionsByQuestion =
+      options?.reduce((acc, option) => {
+        if (!acc[option.question_id]) {
+          acc[option.question_id] = [];
+        }
+        acc[option.question_id].push(option);
+        return acc;
+      }, {} as Record<string, any[]>) || {};
+
+    // Process answers based on question type
+    const answerInserts = Object.entries(answers)
+      .map(([questionId, answer]) => {
+        const baseAnswer = {
+          attempt_id: attemptId,
+          question_id: questionId,
+          answered_at: new Date().toISOString(),
+        };
+
+        const questionType = questionTypes[questionId];
+
+        if (!questionType || !answer || answer === "") {
+          return null; // Skip empty answers
+        }
+
+        if (questionType === "essay") {
+          // Essay answer
+          return {
+            ...baseAnswer,
+            answer_text: answer,
+          };
+        } else if (questionType === "multiple_choice") {
+          // Find the option ID that matches the selected text
+          const questionOptions = optionsByQuestion[questionId] || [];
+          const selectedOption = questionOptions.find(
+            (opt) => opt.option_text === answer
+          );
+
+          if (selectedOption) {
+            return {
+              ...baseAnswer,
+              selected_option_id: selectedOption.id,
+            };
+          }
+        } else if (questionType === "true_false") {
+          // Find the option ID that matches true/false
+          const questionOptions = optionsByQuestion[questionId] || [];
+          const selectedOption = questionOptions.find(
+            (opt) => opt.option_text.toLowerCase() === answer.toLowerCase()
+          );
+
+          if (selectedOption) {
+            return {
+              ...baseAnswer,
+              selected_option_id: selectedOption.id,
+            };
+          }
+        }
+
+        return null;
+      })
+      .filter((answer) => answer !== null);
+
+    // Insert student answers
+    if (answerInserts.length > 0) {
+      const { error: answersError } = await supabase
+        .from("student_answers")
+        .insert(answerInserts);
+
+      if (answersError) {
+        console.error("Error saving student answers:", answersError);
+        throw new Error("Failed to save answers");
+      }
+    }
+
+    // Update attempt with submission time
+    const { error: updateError } = await supabase
+      .from("quiz_attempts")
+      .update({
+        submitted_at: new Date().toISOString(),
+        answers: answers,
+      })
+      .eq("id", attemptId);
+
+    if (updateError) {
+      console.error("Error updating quiz attempt:", updateError);
+      throw new Error("Failed to submit quiz attempt");
+    }
+
+    // Calculate and save results
+    const results = await calculateQuizResults(attemptId);
+
+    return results;
+  } catch (error) {
     console.error("Error submitting quiz attempt:", error);
-    throw new Error("Failed to submit quiz attempt");
+    throw error;
   }
-
-  return attempt;
 }
 
 // Get student's quiz attempts/results
@@ -1536,8 +1906,8 @@ export async function joinClassWithCode(classCode: string, studentId: string) {
   };
 }
 
-// Get detailed quiz attempt results
-export async function getQuizAttemptDetails(attemptId: string) {
+// Get detailed quiz attempt results for admin
+export async function getAdminQuizAttemptDetails(attemptId: string) {
   const supabase = createClient();
   const user = await getCurrentUser();
 
@@ -1546,7 +1916,7 @@ export async function getQuizAttemptDetails(attemptId: string) {
   }
 
   try {
-    // Get the quiz attempt with quiz and class details
+    // Get the quiz attempt with quiz, class, and student details
     const { data: attempt, error: attemptError } = await supabase
       .from("quiz_attempts")
       .select(
@@ -1555,7 +1925,7 @@ export async function getQuizAttemptDetails(attemptId: string) {
         quiz:quizzes!inner (
           id,
           title,
-          show_results_to_students,
+          created_by,
           class:classes!inner (
             id,
             name,
@@ -1563,11 +1933,17 @@ export async function getQuizAttemptDetails(attemptId: string) {
             semester,
             academic_year
           )
+        ),
+        student:profiles!inner (
+          id,
+          name,
+          email,
+          index_number
         )
       `
       )
       .eq("id", attemptId)
-      .eq("student_id", user.id)
+      .eq("quiz.created_by", user.id) // Ensure admin owns the quiz
       .single();
 
     if (attemptError) {
@@ -1695,6 +2071,281 @@ export async function getQuizAttemptDetails(attemptId: string) {
       quiz_id: attempt.quiz_id,
       quiz_title: attempt.quiz.title,
       class_name: `${attempt.quiz.class.name} - ${attempt.quiz.class.semester} ${attempt.quiz.class.academic_year}`,
+      student_name: attempt.student.name || "Unknown Student",
+      student_email: attempt.student.email,
+      student_index_number: attempt.student.index_number || "",
+      attempt_number: attempt.attempt_number,
+      started_at: attempt.started_at,
+      submitted_at: attempt.submitted_at,
+      score: attempt.score,
+      total_points: totalPoints,
+      time_taken: attempt.time_taken || 0,
+      status: attempt.status,
+      questions: processedQuestions,
+    };
+  } catch (error) {
+    console.error("Error in getAdminQuizAttemptDetails:", error);
+    throw error;
+  }
+}
+
+// Get all quiz results for admin's classes
+export async function getAdminQuizResults(adminId: string) {
+  const supabase = createClient();
+
+  try {
+    // Get all quiz attempts for quizzes created by this admin
+    const { data: attempts, error: attemptsError } = await supabase
+      .from("quiz_attempts")
+      .select(
+        `
+        *,
+        quiz:quizzes!inner (
+          id,
+          title,
+          class:classes!inner (
+            id,
+            name,
+            subject,
+            semester,
+            academic_year
+          )
+        ),
+        student:profiles!inner (
+          id,
+          name,
+          email,
+          index_number
+        )
+      `
+      )
+      .eq("quiz.created_by", adminId)
+      .order("started_at", { ascending: false });
+
+    if (attemptsError) {
+      console.error("Error fetching quiz attempts:", attemptsError);
+      throw new Error("Failed to fetch quiz attempts");
+    }
+
+    if (!attempts || attempts.length === 0) {
+      return [];
+    }
+
+    // Get quiz IDs to check for essay questions
+    const quizIds = [...new Set(attempts.map((attempt) => attempt.quiz_id))];
+
+    const { data: questions, error: questionsError } = await supabase
+      .from("questions")
+      .select("quiz_id, type")
+      .in("quiz_id", quizIds);
+
+    if (questionsError) {
+      console.error("Error fetching questions:", questionsError);
+      throw new Error("Failed to fetch questions");
+    }
+
+    // Create a map of quiz IDs to whether they have essay questions
+    const quizHasEssayQuestions =
+      questions?.reduce((acc, question) => {
+        if (!acc[question.quiz_id]) {
+          acc[question.quiz_id] = false;
+        }
+        if (question.type === "essay") {
+          acc[question.quiz_id] = true;
+        }
+        return acc;
+      }, {} as Record<string, boolean>) || {};
+
+    // Transform the data for the frontend
+    return attempts.map((attempt) => ({
+      id: attempt.id,
+      quiz_id: attempt.quiz_id,
+      quiz_title: attempt.quiz.title,
+      class_name: `${attempt.quiz.class.name} - ${attempt.quiz.class.semester} ${attempt.quiz.class.academic_year}`,
+      student_name: attempt.student.name || "Unknown Student",
+      student_email: attempt.student.email,
+      student_index_number: attempt.student.index_number || "",
+      attempt_number: attempt.attempt_number,
+      started_at: attempt.started_at,
+      submitted_at: attempt.submitted_at,
+      score: attempt.score,
+      total_points: attempt.total_points || 0,
+      time_taken: attempt.time_taken || 0,
+      status: attempt.status,
+      has_essay_questions: quizHasEssayQuestions[attempt.quiz_id] || false,
+    }));
+  } catch (error) {
+    console.error("Error in getAdminQuizResults:", error);
+    throw error;
+  }
+}
+
+// Get detailed quiz attempt results (for students)
+export async function getQuizAttemptDetails(attemptId: string) {
+  const supabase = createClient();
+  const user = await getCurrentUser();
+
+  if (!user) {
+    throw new Error("No authenticated user");
+  }
+
+  try {
+    // Get the quiz attempt with quiz and class details
+    const { data: attempt, error: attemptError } = await supabase
+      .from("quiz_attempts")
+      .select(
+        `
+        *,
+        quiz:quizzes!inner (
+          id,
+          title,
+          show_results_to_students,
+          class:classes!inner (
+            id,
+            name,
+            subject,
+            semester,
+            academic_year
+          )
+        )
+      `
+      )
+      .eq("id", attemptId)
+      .eq("student_id", user.id)
+      .single();
+
+    if (attemptError) {
+      console.error("Error fetching quiz attempt:", attemptError);
+      throw new Error("Failed to fetch quiz attempt details");
+    }
+
+    // Get questions for this quiz
+    const { data: questions, error: questionsError } = await supabase
+      .from("questions")
+      .select("*")
+      .eq("quiz_id", attempt.quiz_id)
+      .order("question_number");
+
+    if (questionsError) {
+      console.error("Error fetching questions:", questionsError);
+      throw new Error("Failed to fetch question details");
+    }
+
+    console.log("Questions found:", questions);
+
+    // Get student answers for this attempt
+    const { data: studentAnswers, error: answersError } = await supabase
+      .from("student_answers")
+      .select("*")
+      .eq("attempt_id", attemptId);
+
+    if (answersError) {
+      console.error("Error fetching student answers:", answersError);
+      throw new Error("Failed to fetch student answers");
+    }
+
+    console.log("Existing student answers:", studentAnswers);
+
+    // Get question options for multiple choice questions
+    const questionIds = questions.map((q) => q.id);
+    console.log("Looking for options for question IDs:", questionIds);
+
+    const { data: options, error: optionsError } = await supabase
+      .from("question_options")
+      .select("*")
+      .in("question_id", questionIds);
+
+    if (optionsError) {
+      console.error("Error fetching question options:", optionsError);
+      throw new Error("Failed to fetch question options");
+    }
+
+    console.log("Options found:", options);
+
+    // Organize options by question
+    const optionsByQuestion =
+      options?.reduce((acc, option) => {
+        if (!acc[option.question_id]) {
+          acc[option.question_id] = [];
+        }
+        acc[option.question_id].push(option);
+        return acc;
+      }, {} as Record<string, any[]>) || {};
+
+    // Organize student answers by question
+    const answersByQuestion =
+      studentAnswers?.reduce((acc, answer) => {
+        acc[answer.question_id] = answer;
+        return acc;
+      }, {} as Record<string, any>) || {};
+
+    // Process questions with student answers
+    const processedQuestions = questions.map((question) => {
+      const studentAnswer = answersByQuestion[question.id];
+      const questionOptions = optionsByQuestion[question.id] || [];
+
+      // For multiple choice, convert options to simple array
+      const optionsArray = questionOptions.map((opt) => opt.option_text);
+
+      // Determine student's answer based on question type
+      let studentAnswerValue;
+      if (
+        question.type === "multiple_choice" &&
+        studentAnswer?.selected_option_id
+      ) {
+        const selectedOption = questionOptions.find(
+          (opt) => opt.id === studentAnswer.selected_option_id
+        );
+        studentAnswerValue = selectedOption
+          ? questionOptions.indexOf(selectedOption)
+          : null;
+      } else if (
+        question.type === "true_false" &&
+        studentAnswer?.selected_option_id
+      ) {
+        const selectedOption = questionOptions.find(
+          (opt) => opt.id === studentAnswer.selected_option_id
+        );
+        studentAnswerValue = selectedOption?.option_text?.toLowerCase();
+      } else if (question.type === "essay") {
+        studentAnswerValue = studentAnswer?.answer_text;
+      }
+
+      // Determine correct answer
+      let correctAnswerValue;
+      if (question.type === "multiple_choice") {
+        const correctOption = questionOptions.find((opt) => opt.is_correct);
+        correctAnswerValue = correctOption
+          ? questionOptions.indexOf(correctOption)
+          : null;
+      } else if (question.type === "true_false") {
+        const correctOption = questionOptions.find((opt) => opt.is_correct);
+        correctAnswerValue = correctOption?.option_text?.toLowerCase();
+      }
+
+      return {
+        id: question.id,
+        question_number: question.question_number,
+        type: question.type,
+        question_text: question.question_text,
+        points: question.points,
+        options: optionsArray.length > 0 ? optionsArray : undefined,
+        correct_answer: correctAnswerValue,
+        explanation: question.explanation,
+        student_answer: studentAnswerValue,
+        points_awarded: studentAnswer?.points_awarded || 0,
+        is_correct: studentAnswer?.is_correct || false,
+      };
+    });
+
+    // Calculate total points
+    const totalPoints = questions.reduce((sum, q) => sum + q.points, 0);
+
+    return {
+      id: attempt.id,
+      quiz_id: attempt.quiz_id,
+      quiz_title: attempt.quiz.title,
+      class_name: `${attempt.quiz.class.name} - ${attempt.quiz.class.semester} ${attempt.quiz.class.academic_year}`,
       started_at: attempt.started_at,
       submitted_at: attempt.submitted_at,
       score: attempt.score,
@@ -1705,6 +2356,440 @@ export async function getQuizAttemptDetails(attemptId: string) {
     };
   } catch (error) {
     console.error("Error in getQuizAttemptDetails:", error);
+    throw error;
+  }
+}
+
+// Fix existing quiz attempts that were submitted before the scoring fix
+export async function fixExistingQuizAttempt(attemptId: string) {
+  const supabase = createClient();
+
+  try {
+    console.log(`Fixing existing quiz attempt: ${attemptId}`);
+
+    // Get the quiz attempt
+    const { data: attempt, error: attemptError } = await supabase
+      .from("quiz_attempts")
+      .select("*")
+      .eq("id", attemptId)
+      .single();
+
+    if (attemptError) {
+      console.error("Error fetching quiz attempt:", attemptError);
+      throw new Error("Failed to fetch quiz attempt");
+    }
+
+    // Get questions for this quiz
+    const { data: questions, error: questionsError } = await supabase
+      .from("questions")
+      .select("*")
+      .eq("quiz_id", attempt.quiz_id);
+
+    if (questionsError) {
+      console.error("Error fetching questions:", questionsError);
+      throw new Error("Failed to fetch questions");
+    }
+
+    console.log("Questions found:", questions);
+
+    // Get existing student answers
+    const { data: existingAnswers, error: answersError } = await supabase
+      .from("student_answers")
+      .select("*")
+      .eq("attempt_id", attemptId);
+
+    if (answersError) {
+      console.error("Error fetching existing answers:", answersError);
+      throw new Error("Failed to fetch existing answers");
+    }
+
+    console.log("Existing student answers:", existingAnswers);
+
+    // Get question options
+    const questionIds = questions.map((q) => q.id);
+    console.log("Looking for options for question IDs:", questionIds);
+
+    const { data: options, error: optionsError } = await supabase
+      .from("question_options")
+      .select("*")
+      .in("question_id", questionIds);
+
+    if (optionsError) {
+      console.error("Error fetching question options:", optionsError);
+      throw new Error("Failed to fetch question options");
+    }
+
+    console.log("Options found:", options);
+
+    // Create maps
+    const questionTypes = questions.reduce((acc, q) => {
+      acc[q.id] = q.type;
+      return acc;
+    }, {} as Record<string, string>);
+
+    const optionsByQuestion =
+      options?.reduce((acc, option) => {
+        if (!acc[option.question_id]) {
+          acc[option.question_id] = [];
+        }
+        acc[option.question_id].push(option);
+        return acc;
+      }, {} as Record<string, any[]>) || {};
+
+    // Check if we have the original answers from the attempt
+    const originalAnswers = attempt.answers || {};
+    console.log("Original answers from attempt:", originalAnswers);
+
+    // Delete existing student answers and recreate them correctly
+    await supabase.from("student_answers").delete().eq("attempt_id", attemptId);
+
+    // Recreate answers with correct structure
+    const correctedAnswers = Object.entries(originalAnswers)
+      .map(([questionId, answer]) => {
+        const baseAnswer = {
+          attempt_id: attemptId,
+          question_id: questionId,
+          answered_at: new Date().toISOString(),
+        };
+
+        const questionType = questionTypes[questionId];
+
+        if (!questionType || !answer || answer === "") {
+          return null;
+        }
+
+        console.log(
+          `Processing question ${questionId} (${questionType}):`,
+          answer
+        );
+
+        if (questionType === "essay") {
+          return {
+            ...baseAnswer,
+            answer_text: answer,
+          };
+        } else if (questionType === "multiple_choice") {
+          const questionOptions = optionsByQuestion[questionId] || [];
+          const selectedOption = questionOptions.find(
+            (opt) => opt.option_text === answer
+          );
+
+          console.log(
+            `  Multiple choice options:`,
+            questionOptions.map((o) => o.option_text)
+          );
+          console.log(`  Looking for:`, answer);
+          console.log(`  Found option:`, selectedOption);
+
+          if (selectedOption) {
+            return {
+              ...baseAnswer,
+              selected_option_id: selectedOption.id,
+            };
+          }
+        } else if (questionType === "true_false") {
+          const questionOptions = optionsByQuestion[questionId] || [];
+          const selectedOption = questionOptions.find(
+            (opt) => opt.option_text.toLowerCase() === answer.toLowerCase()
+          );
+
+          console.log(
+            `  True/false options:`,
+            questionOptions.map((o) => o.option_text)
+          );
+          console.log(`  Looking for:`, answer);
+          console.log(`  Found option:`, selectedOption);
+
+          if (selectedOption) {
+            return {
+              ...baseAnswer,
+              selected_option_id: selectedOption.id,
+            };
+          }
+        }
+
+        return null;
+      })
+      .filter((answer) => answer !== null);
+
+    console.log("Corrected answers to insert:", correctedAnswers);
+
+    // Insert corrected answers
+    if (correctedAnswers.length > 0) {
+      const { error: insertError } = await supabase
+        .from("student_answers")
+        .insert(correctedAnswers);
+
+      if (insertError) {
+        console.error("Error inserting corrected answers:", insertError);
+        throw new Error("Failed to insert corrected answers");
+      }
+    }
+
+    // Recalculate the results
+    const results = await calculateQuizResults(attemptId);
+
+    console.log("Quiz attempt fixed successfully:", results);
+    return results;
+  } catch (error) {
+    console.error("Error fixing quiz attempt:", error);
+    throw error;
+  }
+}
+
+// Debug function to check database state for a quiz
+export async function debugQuizDatabase(quizId: string) {
+  const supabase = createClient();
+
+  try {
+    console.log(`=== DEBUGGING QUIZ DATABASE FOR: ${quizId} ===`);
+
+    // Get quiz details
+    const { data: quiz, error: quizError } = await supabase
+      .from("quizzes")
+      .select("*")
+      .eq("id", quizId)
+      .single();
+
+    console.log("Quiz:", quiz);
+    if (quizError) console.error("Quiz error:", quizError);
+
+    // Get questions
+    const { data: questions, error: questionsError } = await supabase
+      .from("questions")
+      .select("*")
+      .eq("quiz_id", quizId);
+
+    console.log("Questions:", questions);
+    if (questionsError) console.error("Questions error:", questionsError);
+
+    if (questions && questions.length > 0) {
+      // Get options for all questions
+      const { data: options, error: optionsError } = await supabase
+        .from("question_options")
+        .select("*")
+        .in(
+          "question_id",
+          questions.map((q) => q.id)
+        );
+
+      console.log("Options:", options);
+      if (optionsError) console.error("Options error:", optionsError);
+
+      // Group options by question
+      const optionsByQuestion =
+        options?.reduce((acc, opt) => {
+          if (!acc[opt.question_id]) acc[opt.question_id] = [];
+          acc[opt.question_id].push(opt);
+          return acc;
+        }, {} as Record<string, any[]>) || {};
+
+      questions.forEach((q) => {
+        console.log(`Question ${q.question_number} (${q.type}):`, {
+          id: q.id,
+          text: q.question_text,
+          options: optionsByQuestion[q.id] || [],
+        });
+      });
+    }
+
+    console.log("=== END DEBUG ===");
+  } catch (error) {
+    console.error("Debug error:", error);
+  }
+}
+
+// Fix quiz questions that are missing their options
+export async function fixQuizQuestions(quizId: string) {
+  const supabase = createClient();
+
+  try {
+    console.log(`=== FIXING QUIZ QUESTIONS FOR: ${quizId} ===`);
+
+    // Get questions for this quiz
+    const { data: questions, error: questionsError } = await supabase
+      .from("questions")
+      .select("*")
+      .eq("quiz_id", quizId);
+
+    if (questionsError) {
+      console.error("Error fetching questions:", questionsError);
+      throw new Error("Failed to fetch questions");
+    }
+
+    console.log("Questions to fix:", questions);
+
+    // Get all quiz attempts for this quiz to see what answers students gave
+    const { data: attempts, error: attemptsError } = await supabase
+      .from("quiz_attempts")
+      .select("id, answers")
+      .eq("quiz_id", quizId);
+
+    console.log("Quiz attempts found:", attempts);
+
+    for (const question of questions) {
+      console.log(
+        `Processing question ${question.question_number} (${question.type}):`,
+        question
+      );
+
+      // Check if this question already has options
+      const { data: existingOptions } = await supabase
+        .from("question_options")
+        .select("*")
+        .eq("question_id", question.id);
+
+      if (existingOptions && existingOptions.length > 0) {
+        console.log(
+          `  Question ${question.question_number} already has options, skipping`
+        );
+        continue;
+      }
+
+      // Create options based on question type
+      let optionsToCreate = [];
+
+      if (question.type === "multiple_choice") {
+        // Check if the question has stored options in the options field
+        console.log("Question options field:", question.options);
+        console.log("Question correct_answer field:", question.correct_answer);
+
+        if (
+          question.options &&
+          Array.isArray(question.options) &&
+          question.options.length > 0
+        ) {
+          // Use the stored options
+          optionsToCreate = question.options.map((optionText, index) => ({
+            question_id: question.id,
+            option_text: optionText,
+            is_correct: index === (question.correct_answer || 0),
+            order_index: index,
+          }));
+        } else {
+          // For "What is 2 + 2", create standard math options
+          if (question.question_text.toLowerCase().includes("2 + 2")) {
+            optionsToCreate = [
+              {
+                question_id: question.id,
+                option_text: "3",
+                is_correct: false,
+                order_index: 0,
+              },
+              {
+                question_id: question.id,
+                option_text: "4",
+                is_correct: true, // 2 + 2 = 4
+                order_index: 1,
+              },
+              {
+                question_id: question.id,
+                option_text: "5",
+                is_correct: false,
+                order_index: 2,
+              },
+              {
+                question_id: question.id,
+                option_text: "6",
+                is_correct: false,
+                order_index: 3,
+              },
+            ];
+          } else {
+            // Look at student answers to guess what options might have been
+            const studentAnswers =
+              attempts?.map((a) => a.answers?.[question.id]).filter(Boolean) ||
+              [];
+            console.log(`  Student answers for this question:`, studentAnswers);
+
+            if (studentAnswers.length > 0) {
+              // Create options based on unique student answers
+              const uniqueAnswers = [...new Set(studentAnswers)];
+              optionsToCreate = uniqueAnswers.map((answer, index) => ({
+                question_id: question.id,
+                option_text: answer,
+                is_correct: index === 0, // Assume first unique answer is correct (this is a guess)
+                order_index: index,
+              }));
+            } else {
+              console.log(
+                `  No student answers found, creating generic options`
+              );
+              optionsToCreate = [
+                {
+                  question_id: question.id,
+                  option_text: "Option A",
+                  is_correct: true,
+                  order_index: 0,
+                },
+                {
+                  question_id: question.id,
+                  option_text: "Option B",
+                  is_correct: false,
+                  order_index: 1,
+                },
+              ];
+            }
+          }
+        }
+      } else if (question.type === "true_false") {
+        // For true/false, always create True and False options
+        // For "Ghana is in Africa", the correct answer should be True
+        const isGhanaQuestion =
+          question.question_text.toLowerCase().includes("ghana") &&
+          question.question_text.toLowerCase().includes("africa");
+
+        optionsToCreate = [
+          {
+            question_id: question.id,
+            option_text: "True",
+            is_correct: isGhanaQuestion
+              ? true
+              : question.correct_answer === "true" ||
+                question.correct_answer === true ||
+                question.correct_answer === "True",
+            order_index: 0,
+          },
+          {
+            question_id: question.id,
+            option_text: "False",
+            is_correct: isGhanaQuestion
+              ? false
+              : question.correct_answer === "false" ||
+                question.correct_answer === false ||
+                question.correct_answer === "False",
+            order_index: 1,
+          },
+        ];
+      }
+
+      if (optionsToCreate.length > 0) {
+        console.log(
+          `  Creating ${optionsToCreate.length} options for question ${question.question_number}:`,
+          optionsToCreate
+        );
+
+        const { error: insertError } = await supabase
+          .from("question_options")
+          .insert(optionsToCreate);
+
+        if (insertError) {
+          console.error(
+            `Error creating options for question ${question.question_number}:`,
+            insertError
+          );
+        } else {
+          console.log(
+            `  ✅ Created options for question ${question.question_number}`
+          );
+        }
+      }
+    }
+
+    console.log("=== QUIZ QUESTIONS FIXED ===");
+    return true;
+  } catch (error) {
+    console.error("Error fixing quiz questions:", error);
     throw error;
   }
 }

@@ -23,6 +23,7 @@ import {
   LogOut,
   Menu,
   X,
+  Trophy,
 } from "lucide-react";
 
 import { signOut } from "@/lib/auth/client-auth-helpers";
@@ -40,6 +41,7 @@ export default function AdminNavigation({ profile }: AdminNavigationProps) {
     { name: "Dashboard", href: "/admin/dashboard", icon: BarChart3 },
     { name: "Classes", href: "/admin/classes", icon: Users },
     { name: "Quizzes", href: "/admin/quizzes", icon: BookOpen },
+    { name: "Results", href: "/admin/results", icon: Trophy },
     { name: "Settings", href: "/admin/settings", icon: Settings },
   ];
 
