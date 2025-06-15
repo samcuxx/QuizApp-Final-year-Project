@@ -24,17 +24,14 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
 import {
-  Plus,
-  Trash2,
   ArrowLeft,
   Save,
-  Clock,
   Calendar,
+  Clock,
   BookOpen,
   HelpCircle,
   CheckCircle,
   FileText,
-  GripVertical,
 } from "lucide-react";
 import Link from "next/link";
 import { useAuth } from "@/lib/providers/auth-provider";
@@ -141,82 +138,6 @@ export default function EditQuizPage() {
 
     loadData();
   }, [params.id, profile?.id]);
-
-  const generateQuestionId = () =>
-    `q_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
-  const addQuestion = (type: Question["type"]) => {
-    const newQuestion: Question = {
-      id: generateQuestionId(),
-      question_number: questions.length + 1,
-      type,
-      question_text: "",
-      points: 1,
-      ...(type === "multiple_choice" && {
-        options: ["", "", "", ""],
-        correct_answer: 0,
-      }),
-      ...(type === "true_false" && {
-        correct_answer: "true",
-      }),
-    };
-    setQuestions([...questions, newQuestion]);
-  };
-
-  const updateQuestion = (id: string, updates: Partial<Question>) => {
-    setQuestions(
-      questions.map((q) => (q.id === id ? { ...q, ...updates } : q))
-    );
-  };
-
-  const removeQuestion = (id: string) => {
-    const updatedQuestions = questions.filter((q) => q.id !== id);
-    // Renumber remaining questions
-    const renumberedQuestions = updatedQuestions.map((q, index) => ({
-      ...q,
-      question_number: index + 1,
-    }));
-    setQuestions(renumberedQuestions);
-  };
-
-  const updateOption = (
-    questionId: string,
-    optionIndex: number,
-    value: string
-  ) => {
-    const question = questions.find((q) => q.id === questionId);
-    if (question && question.options) {
-      const newOptions = [...question.options];
-      newOptions[optionIndex] = value;
-      updateQuestion(questionId, { options: newOptions });
-    }
-  };
-
-  const addOption = (questionId: string) => {
-    const question = questions.find((q) => q.id === questionId);
-    if (question && question.options) {
-      updateQuestion(questionId, {
-        options: [...question.options, ""],
-      });
-    }
-  };
-
-  const removeOption = (questionId: string, optionIndex: number) => {
-    const question = questions.find((q) => q.id === questionId);
-    if (question && question.options && question.options.length > 2) {
-      const newOptions = question.options.filter(
-        (_, index) => index !== optionIndex
-      );
-      updateQuestion(questionId, {
-        options: newOptions,
-        correct_answer:
-          typeof question.correct_answer === "number" &&
-          question.correct_answer >= optionIndex
-            ? Math.max(0, question.correct_answer - 1)
-            : question.correct_answer,
-      });
-    }
-  };
 
   const validateForm = () => {
     if (!title.trim()) return "Quiz title is required";

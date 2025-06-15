@@ -42,7 +42,7 @@ export default function AdminNavigation({ profile }: AdminNavigationProps) {
     { name: "Classes", href: "/admin/classes", icon: Users },
     { name: "Quizzes", href: "/admin/quizzes", icon: BookOpen },
     { name: "Results", href: "/admin/results", icon: Trophy },
-    { name: "Settings", href: "/admin/settings", icon: Settings },
+    { name: "Profile", href: "/admin/profile", icon: Settings },
   ];
 
   const handleSignOut = async () => {

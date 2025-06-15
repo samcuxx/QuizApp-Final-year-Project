@@ -117,9 +117,9 @@ export default function AdminResultsPage() {
           getAdminQuizResults(profile.id),
         ]);
 
-        setClasses(classesData);
-        setQuizzes(quizzesData);
-        setResults(resultsData);
+        setClasses(classesData || []);
+        setQuizzes(quizzesData || []);
+        setResults(resultsData || []);
       } catch (error) {
         console.error("Error loading results data:", error);
       } finally {
@@ -342,9 +342,9 @@ export default function AdminResultsPage() {
         getAdminQuizResults(profile.id),
       ]);
 
-      setClasses(classesData);
-      setQuizzes(quizzesData);
-      setResults(resultsData);
+      setClasses(classesData || []);
+      setQuizzes(quizzesData || []);
+      setResults(resultsData || []);
     } catch (error) {
       console.error("Error refreshing data:", error);
       alert("Error refreshing data. Please try again.");

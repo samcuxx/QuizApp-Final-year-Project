@@ -15,11 +15,10 @@ import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   UserPlus,
+  Download,
   Upload,
-  FileText,
   AlertCircle,
   CheckCircle,
-  Download,
 } from "lucide-react";
 import {
   enrollStudentInClass,

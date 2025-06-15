@@ -424,10 +424,10 @@ export async function getStudentsInClass(classId: string) {
     // Transform the data to match our Student interface
     const students =
       data?.map((enrollment) => ({
-        id: enrollment.profiles.id,
-        name: enrollment.profiles.name,
-        email: enrollment.profiles.email,
-        index_number: enrollment.profiles.index_number,
+        id: (enrollment.profiles as any).id,
+        name: (enrollment.profiles as any).name,
+        email: (enrollment.profiles as any).email,
+        index_number: (enrollment.profiles as any).index_number,
         enrolled_at: enrollment.enrolled_at,
       })) || [];
 
@@ -1058,7 +1058,7 @@ export async function getStudentClasses(studentId: string) {
       return {
         ...classData,
         enrolled_at: enrollment.enrolled_at,
-        instructor_name: classData?.admin?.name || "Unknown",
+        instructor_name: (classData?.admin as any)?.name || "Unknown",
       };
     })
     .filter(Boolean);
@@ -1500,7 +1500,9 @@ export async function calculateQuizResults(attemptId: string) {
       let isCorrect = false;
 
       if (question.type === "multiple_choice") {
-        const correctOption = questionOptions.find((opt) => opt.is_correct);
+        const correctOption = questionOptions.find(
+          (opt: any) => opt.is_correct
+        );
         if (
           correctOption &&
           studentAnswer.selected_option_id === correctOption.id
@@ -1509,7 +1511,9 @@ export async function calculateQuizResults(attemptId: string) {
           isCorrect = true;
         }
       } else if (question.type === "true_false") {
-        const correctOption = questionOptions.find((opt) => opt.is_correct);
+        const correctOption = questionOptions.find(
+          (opt: any) => opt.is_correct
+        );
         if (
           correctOption &&
           studentAnswer.selected_option_id === correctOption.id
@@ -2010,7 +2014,7 @@ export async function getAdminQuizAttemptDetails(attemptId: string) {
       const questionOptions = optionsByQuestion[question.id] || [];
 
       // For multiple choice, convert options to simple array
-      const optionsArray = questionOptions.map((opt) => opt.option_text);
+      const optionsArray = questionOptions.map((opt: any) => opt.option_text);
 
       // Determine student's answer based on question type
       let studentAnswerValue;
@@ -2039,12 +2043,16 @@ export async function getAdminQuizAttemptDetails(attemptId: string) {
       // Determine correct answer
       let correctAnswerValue;
       if (question.type === "multiple_choice") {
-        const correctOption = questionOptions.find((opt) => opt.is_correct);
+        const correctOption = questionOptions.find(
+          (opt: any) => opt.is_correct
+        );
         correctAnswerValue = correctOption
           ? questionOptions.indexOf(correctOption)
           : null;
       } else if (question.type === "true_false") {
-        const correctOption = questionOptions.find((opt) => opt.is_correct);
+        const correctOption = questionOptions.find(
+          (opt: any) => opt.is_correct
+        );
         correctAnswerValue = correctOption?.option_text?.toLowerCase();
       }
 
@@ -2285,7 +2293,7 @@ export async function getQuizAttemptDetails(attemptId: string) {
       const questionOptions = optionsByQuestion[question.id] || [];
 
       // For multiple choice, convert options to simple array
-      const optionsArray = questionOptions.map((opt) => opt.option_text);
+      const optionsArray = questionOptions.map((opt: any) => opt.option_text);
 
       // Determine student's answer based on question type
       let studentAnswerValue;
@@ -2314,12 +2322,16 @@ export async function getQuizAttemptDetails(attemptId: string) {
       // Determine correct answer
       let correctAnswerValue;
       if (question.type === "multiple_choice") {
-        const correctOption = questionOptions.find((opt) => opt.is_correct);
+        const correctOption = questionOptions.find(
+          (opt: any) => opt.is_correct
+        );
         correctAnswerValue = correctOption
           ? questionOptions.indexOf(correctOption)
           : null;
       } else if (question.type === "true_false") {
-        const correctOption = questionOptions.find((opt) => opt.is_correct);
+        const correctOption = questionOptions.find(
+          (opt: any) => opt.is_correct
+        );
         correctAnswerValue = correctOption?.option_text?.toLowerCase();
       }
 

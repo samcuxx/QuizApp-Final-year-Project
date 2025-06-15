@@ -3,7 +3,7 @@ import { Geist } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import { AuthProvider } from "@/lib/providers/auth-provider";
 import { ToastProvider } from "@/lib/providers/toast-provider";
-import { AuthDebug } from "@/components/debug/auth-debug";
+import AuthDebug from "@/components/debug/auth-debug";
 import "./globals.css";
 
 const defaultUrl = process.env.VERCEL_URL

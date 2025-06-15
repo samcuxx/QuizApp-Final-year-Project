@@ -12,22 +12,17 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Separator } from "@/components/ui/separator";
 import {
   ArrowLeft,
-  Edit,
-  Trash2,
-  Play,
-  Pause,
-  Copy,
   Calendar,
   Clock,
   Users,
   BookOpen,
-  HelpCircle,
-  CheckCircle,
-  FileText,
-  Settings,
+  Trophy,
+  Edit,
+  Trash2,
+  Play,
+  BarChart3,
 } from "lucide-react";
 import Link from "next/link";
 import { useAuth } from "@/lib/providers/auth-provider";
@@ -88,9 +83,9 @@ const questionTypeLabels = {
 };
 
 const questionTypeIcons = {
-  multiple_choice: HelpCircle,
-  true_false: CheckCircle,
-  essay: FileText,
+  multiple_choice: Trophy,
+  true_false: Trophy,
+  essay: Trophy,
 };
 
 export default function QuizDetailsPage() {
@@ -251,7 +246,7 @@ export default function QuizDetailsPage() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center">
-            <Settings className="h-5 w-5 mr-2" />
+            <BarChart3 className="h-5 w-5 mr-2" />
             Quiz Actions
           </CardTitle>
         </CardHeader>
@@ -263,7 +258,7 @@ export default function QuizDetailsPage() {
               onClick={copyQuizCode}
               className="flex items-center"
             >
-              <Copy className="h-4 w-4 mr-2" />
+              <BarChart3 className="h-4 w-4 mr-2" />
               Copy Quiz Code: {quiz.quiz_code}
             </Button>
 
@@ -286,7 +281,7 @@ export default function QuizDetailsPage() {
                 onClick={() => handleStatusChange("completed")}
                 disabled={actionLoading}
               >
-                <Pause className="h-4 w-4 mr-2" />
+                <Play className="h-4 w-4 mr-2" />
                 End Quiz
               </Button>
             )}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -39,7 +39,7 @@ const studentSignInSchema = z.object({
 type AdminSignInForm = z.infer<typeof adminSignInSchema>;
 type StudentSignInForm = z.infer<typeof studentSignInSchema>;
 
-export default function SignInPage() {
+function SignInContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { user, profile, loading: authLoading } = useAuth();
@@ -295,5 +295,21 @@ export default function SignInPage() {
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+export default function SignInPage() {
+  return (
+    <Suspense
+      fallback={
+        <Card>
+          <CardContent className="flex items-center justify-center p-8">
+            <Loader2 className="h-8 w-8 animate-spin" />
+          </CardContent>
+        </Card>
+      }
+    >
+      <SignInContent />
+    </Suspense>
   );
 }

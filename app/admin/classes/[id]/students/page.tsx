@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Upload, UserPlus, Users, Download } from "lucide-react";
+import { Users, ArrowLeft, Download } from "lucide-react";
 import Link from "next/link";
 
 import { StudentEnrollmentTabs } from "@/components/admin/student-enrollment-tabs";
