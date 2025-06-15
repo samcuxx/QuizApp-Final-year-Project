@@ -15,7 +15,7 @@ export function AuthDebug() {
 
   return (
     <Card className="fixed bottom-4 right-4 w-80 max-h-96 overflow-auto bg-gray-900 text-white border-gray-700 z-50">
-      <CardHeader className="pb-2">
+      {/* <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-2">
           Auth Debug
           <Badge
@@ -58,7 +58,7 @@ export function AuthDebug() {
         <div className="pt-2 text-xs text-gray-400">
           Check browser console for detailed logs
         </div>
-      </CardContent>
+      </CardContent> */}
     </Card>
   );
 }

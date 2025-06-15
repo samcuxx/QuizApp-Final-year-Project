@@ -22,14 +22,17 @@ CREATE TABLE classes (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   name TEXT NOT NULL,
   description TEXT,
+  subject TEXT NOT NULL,
+  semester TEXT NOT NULL,
+  academic_year TEXT NOT NULL,
   admin_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
-  class_code TEXT UNIQUE NOT NULL, -- Unique code for class
+  class_code TEXT UNIQUE, -- Optional unique code for class
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- Class enrollments (many-to-many relationship between students and classes)
-CREATE TABLE class_enrollments (
+CREATE TABLE enrollments (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   class_id UUID REFERENCES classes(id) ON DELETE CASCADE NOT NULL,
   student_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
@@ -109,8 +112,8 @@ CREATE TABLE student_answers (
 CREATE INDEX idx_profiles_role ON profiles(role);
 CREATE INDEX idx_profiles_index_number ON profiles(index_number) WHERE index_number IS NOT NULL;
 CREATE INDEX idx_classes_admin_id ON classes(admin_id);
-CREATE INDEX idx_class_enrollments_class_id ON class_enrollments(class_id);
-CREATE INDEX idx_class_enrollments_student_id ON class_enrollments(student_id);
+CREATE INDEX idx_enrollments_class_id ON enrollments(class_id);
+CREATE INDEX idx_enrollments_student_id ON enrollments(student_id);
 CREATE INDEX idx_quizzes_class_id ON quizzes(class_id);
 CREATE INDEX idx_quizzes_admin_id ON quizzes(admin_id);
 CREATE INDEX idx_quizzes_status ON quizzes(status);
@@ -123,7 +126,7 @@ CREATE INDEX idx_student_answers_attempt_id ON student_answers(attempt_id);
 -- Enable Row Level Security
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE classes ENABLE ROW LEVEL SECURITY;
-ALTER TABLE class_enrollments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE enrollments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE quizzes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE questions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE question_options ENABLE ROW LEVEL SECURITY;
@@ -142,19 +145,19 @@ CREATE POLICY "Admins can view all profiles" ON profiles FOR SELECT USING (
 -- Classes: Admins can manage their classes, students can view enrolled classes
 CREATE POLICY "Admins can manage own classes" ON classes FOR ALL USING (admin_id = auth.uid());
 CREATE POLICY "Students can view enrolled classes" ON classes FOR SELECT USING (
-  EXISTS (SELECT 1 FROM class_enrollments WHERE class_id = id AND student_id = auth.uid())
+  EXISTS (SELECT 1 FROM enrollments WHERE class_id = id AND student_id = auth.uid())
 );
 
 -- Class enrollments: Admins can manage, students can view their own
-CREATE POLICY "Admins can manage class enrollments" ON class_enrollments FOR ALL USING (
+CREATE POLICY "Admins can manage enrollments" ON enrollments FOR ALL USING (
   EXISTS (SELECT 1 FROM classes WHERE id = class_id AND admin_id = auth.uid())
 );
-CREATE POLICY "Students can view own enrollments" ON class_enrollments FOR SELECT USING (student_id = auth.uid());
+CREATE POLICY "Students can view own enrollments" ON enrollments FOR SELECT USING (student_id = auth.uid());
 
 -- Quizzes: Admins can manage their quizzes, students can view available quizzes
 CREATE POLICY "Admins can manage own quizzes" ON quizzes FOR ALL USING (admin_id = auth.uid());
 CREATE POLICY "Students can view available quizzes" ON quizzes FOR SELECT USING (
-  EXISTS (SELECT 1 FROM class_enrollments ce 
+  EXISTS (SELECT 1 FROM enrollments ce 
           JOIN classes c ON ce.class_id = c.id 
           WHERE c.id = quizzes.class_id AND ce.student_id = auth.uid())
 );
@@ -165,7 +168,7 @@ CREATE POLICY "Admins can manage questions" ON questions FOR ALL USING (
 );
 CREATE POLICY "Students can view questions during quiz" ON questions FOR SELECT USING (
   EXISTS (SELECT 1 FROM quizzes q
-          JOIN class_enrollments ce ON ce.class_id = q.class_id
+          JOIN enrollments ce ON ce.class_id = q.class_id
           WHERE q.id = quiz_id AND ce.student_id = auth.uid() AND q.status = 'active')
 );
 
@@ -178,7 +181,7 @@ CREATE POLICY "Admins can manage question options" ON question_options FOR ALL U
 CREATE POLICY "Students can view options during quiz" ON question_options FOR SELECT USING (
   EXISTS (SELECT 1 FROM questions q
           JOIN quizzes quiz ON q.quiz_id = quiz.id
-          JOIN class_enrollments ce ON ce.class_id = quiz.class_id
+          JOIN enrollments ce ON ce.class_id = quiz.class_id
           WHERE q.id = question_id AND ce.student_id = auth.uid() AND quiz.status = 'active')
 );
 
