@@ -23,6 +23,8 @@ import {
   Trash2,
   UserPlus,
   BookOpen,
+  Copy,
+  CheckCircle,
 } from "lucide-react";
 import Link from "next/link";
 import { useAuth } from "@/lib/providers/auth-provider";
@@ -38,6 +40,7 @@ interface Class {
   subject: string;
   semester: string;
   academic_year: string;
+  class_code: string;
   created_at: string;
   student_count?: number;
   quiz_count?: number;
@@ -47,6 +50,7 @@ export function ClassList() {
   const [classes, setClasses] = useState<Class[]>([]);
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const { profile } = useAuth();
 
   useEffect(() => {
@@ -65,6 +69,16 @@ export function ClassList() {
 
     loadClasses();
   }, [profile?.id]);
+
+  const copyClassCode = async (classCode: string) => {
+    try {
+      await navigator.clipboard.writeText(classCode);
+      setCopiedCode(classCode);
+      setTimeout(() => setCopiedCode(null), 2000);
+    } catch (error) {
+      console.error("Failed to copy class code:", error);
+    }
+  };
 
   const handleDeleteClass = async (classId: string, className: string) => {
     if (
@@ -176,6 +190,33 @@ export function ClassList() {
             <p className="text-sm text-muted-foreground mb-3 line-clamp-2">
               {cls.description}
             </p>
+
+            {/* Class Code Section */}
+            <div className="mb-3 p-2 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-medium text-blue-800 dark:text-blue-200">
+                    Class Code
+                  </p>
+                  <p className="text-sm font-mono font-bold text-blue-900 dark:text-blue-100">
+                    {cls.class_code}
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => copyClassCode(cls.class_code)}
+                  className="h-8 w-8 p-0"
+                >
+                  {copiedCode === cls.class_code ? (
+                    <CheckCircle className="h-4 w-4 text-green-600" />
+                  ) : (
+                    <Copy className="h-4 w-4 text-blue-600" />
+                  )}
+                </Button>
+              </div>
+            </div>
+
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-2">
                 <Badge variant="secondary" className="text-xs">
