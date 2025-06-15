@@ -1,0 +1,229 @@
+-- Database Schema for Quiz App
+-- Run this SQL in your Supabase SQL Editor
+
+-- Create enum types
+CREATE TYPE user_role AS ENUM ('admin', 'student');
+CREATE TYPE question_type AS ENUM ('multiple_choice', 'true_false', 'essay');
+CREATE TYPE quiz_status AS ENUM ('draft', 'scheduled', 'active', 'completed', 'cancelled');
+
+-- Users table (extends Supabase auth.users)
+CREATE TABLE profiles (
+  id UUID REFERENCES auth.users(id) ON DELETE CASCADE PRIMARY KEY,
+  email TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  role user_role NOT NULL DEFAULT 'student',
+  index_number TEXT UNIQUE, -- For students only
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Classes table
+CREATE TABLE classes (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  admin_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
+  class_code TEXT UNIQUE NOT NULL, -- Unique code for class
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Class enrollments (many-to-many relationship between students and classes)
+CREATE TABLE class_enrollments (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  class_id UUID REFERENCES classes(id) ON DELETE CASCADE NOT NULL,
+  student_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
+  enrolled_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE(class_id, student_id)
+);
+
+-- Quizzes table
+CREATE TABLE quizzes (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT,
+  class_id UUID REFERENCES classes(id) ON DELETE CASCADE NOT NULL,
+  admin_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
+  quiz_code TEXT UNIQUE NOT NULL, -- Unique code for students to join
+  status quiz_status NOT NULL DEFAULT 'draft',
+  scheduled_start TIMESTAMP WITH TIME ZONE,
+  scheduled_end TIMESTAMP WITH TIME ZONE,
+  duration_minutes INTEGER, -- Quiz duration in minutes
+  show_results BOOLEAN DEFAULT FALSE, -- Whether to show results to students
+  randomize_questions BOOLEAN DEFAULT FALSE,
+  attempts_allowed INTEGER DEFAULT 1,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Questions table
+CREATE TABLE questions (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  quiz_id UUID REFERENCES quizzes(id) ON DELETE CASCADE NOT NULL,
+  question_text TEXT NOT NULL,
+  question_type question_type NOT NULL,
+  points INTEGER DEFAULT 1,
+  order_index INTEGER NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Question options (for multiple choice and true/false)
+CREATE TABLE question_options (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  question_id UUID REFERENCES questions(id) ON DELETE CASCADE NOT NULL,
+  option_text TEXT NOT NULL,
+  is_correct BOOLEAN DEFAULT FALSE,
+  order_index INTEGER NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Quiz attempts (track student attempts)
+CREATE TABLE quiz_attempts (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  quiz_id UUID REFERENCES quizzes(id) ON DELETE CASCADE NOT NULL,
+  student_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
+  attempt_number INTEGER NOT NULL DEFAULT 1,
+  started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  submitted_at TIMESTAMP WITH TIME ZONE,
+  score DECIMAL(5,2), -- Total score achieved
+  max_score DECIMAL(5,2), -- Maximum possible score
+  is_completed BOOLEAN DEFAULT FALSE,
+  UNIQUE(quiz_id, student_id, attempt_number)
+);
+
+-- Student answers
+CREATE TABLE student_answers (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  attempt_id UUID REFERENCES quiz_attempts(id) ON DELETE CASCADE NOT NULL,
+  question_id UUID REFERENCES questions(id) ON DELETE CASCADE NOT NULL,
+  selected_option_id UUID REFERENCES question_options(id) ON DELETE SET NULL, -- For multiple choice/true-false
+  answer_text TEXT, -- For essay questions
+  points_awarded DECIMAL(5,2) DEFAULT 0,
+  is_correct BOOLEAN,
+  answered_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE(attempt_id, question_id)
+);
+
+-- Create indexes for better performance
+CREATE INDEX idx_profiles_role ON profiles(role);
+CREATE INDEX idx_profiles_index_number ON profiles(index_number) WHERE index_number IS NOT NULL;
+CREATE INDEX idx_classes_admin_id ON classes(admin_id);
+CREATE INDEX idx_class_enrollments_class_id ON class_enrollments(class_id);
+CREATE INDEX idx_class_enrollments_student_id ON class_enrollments(student_id);
+CREATE INDEX idx_quizzes_class_id ON quizzes(class_id);
+CREATE INDEX idx_quizzes_admin_id ON quizzes(admin_id);
+CREATE INDEX idx_quizzes_status ON quizzes(status);
+CREATE INDEX idx_questions_quiz_id ON questions(quiz_id);
+CREATE INDEX idx_question_options_question_id ON question_options(question_id);
+CREATE INDEX idx_quiz_attempts_quiz_id ON quiz_attempts(quiz_id);
+CREATE INDEX idx_quiz_attempts_student_id ON quiz_attempts(student_id);
+CREATE INDEX idx_student_answers_attempt_id ON student_answers(attempt_id);
+
+-- Enable Row Level Security
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE classes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE class_enrollments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE quizzes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE questions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE question_options ENABLE ROW LEVEL SECURITY;
+ALTER TABLE quiz_attempts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE student_answers ENABLE ROW LEVEL SECURITY;
+
+-- RLS Policies
+
+-- Profiles: Users can read their own profile, admins can read all
+CREATE POLICY "Users can view own profile" ON profiles FOR SELECT USING (auth.uid() = id);
+CREATE POLICY "Users can update own profile" ON profiles FOR UPDATE USING (auth.uid() = id);
+CREATE POLICY "Admins can view all profiles" ON profiles FOR SELECT USING (
+  EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+);
+
+-- Classes: Admins can manage their classes, students can view enrolled classes
+CREATE POLICY "Admins can manage own classes" ON classes FOR ALL USING (admin_id = auth.uid());
+CREATE POLICY "Students can view enrolled classes" ON classes FOR SELECT USING (
+  EXISTS (SELECT 1 FROM class_enrollments WHERE class_id = id AND student_id = auth.uid())
+);
+
+-- Class enrollments: Admins can manage, students can view their own
+CREATE POLICY "Admins can manage class enrollments" ON class_enrollments FOR ALL USING (
+  EXISTS (SELECT 1 FROM classes WHERE id = class_id AND admin_id = auth.uid())
+);
+CREATE POLICY "Students can view own enrollments" ON class_enrollments FOR SELECT USING (student_id = auth.uid());
+
+-- Quizzes: Admins can manage their quizzes, students can view available quizzes
+CREATE POLICY "Admins can manage own quizzes" ON quizzes FOR ALL USING (admin_id = auth.uid());
+CREATE POLICY "Students can view available quizzes" ON quizzes FOR SELECT USING (
+  EXISTS (SELECT 1 FROM class_enrollments ce 
+          JOIN classes c ON ce.class_id = c.id 
+          WHERE c.id = quizzes.class_id AND ce.student_id = auth.uid())
+);
+
+-- Questions: Admins can manage, students can view during quiz
+CREATE POLICY "Admins can manage questions" ON questions FOR ALL USING (
+  EXISTS (SELECT 1 FROM quizzes WHERE id = quiz_id AND admin_id = auth.uid())
+);
+CREATE POLICY "Students can view questions during quiz" ON questions FOR SELECT USING (
+  EXISTS (SELECT 1 FROM quizzes q
+          JOIN class_enrollments ce ON ce.class_id = q.class_id
+          WHERE q.id = quiz_id AND ce.student_id = auth.uid() AND q.status = 'active')
+);
+
+-- Question options: Similar to questions
+CREATE POLICY "Admins can manage question options" ON question_options FOR ALL USING (
+  EXISTS (SELECT 1 FROM questions q 
+          JOIN quizzes quiz ON q.quiz_id = quiz.id 
+          WHERE q.id = question_id AND quiz.admin_id = auth.uid())
+);
+CREATE POLICY "Students can view options during quiz" ON question_options FOR SELECT USING (
+  EXISTS (SELECT 1 FROM questions q
+          JOIN quizzes quiz ON q.quiz_id = quiz.id
+          JOIN class_enrollments ce ON ce.class_id = quiz.class_id
+          WHERE q.id = question_id AND ce.student_id = auth.uid() AND quiz.status = 'active')
+);
+
+-- Quiz attempts: Students can manage their attempts, admins can view all attempts for their quizzes
+CREATE POLICY "Students can manage own attempts" ON quiz_attempts FOR ALL USING (student_id = auth.uid());
+CREATE POLICY "Admins can view quiz attempts" ON quiz_attempts FOR SELECT USING (
+  EXISTS (SELECT 1 FROM quizzes WHERE id = quiz_id AND admin_id = auth.uid())
+);
+
+-- Student answers: Students can manage their answers, admins can view answers for their quizzes
+CREATE POLICY "Students can manage own answers" ON student_answers FOR ALL USING (
+  EXISTS (SELECT 1 FROM quiz_attempts WHERE id = attempt_id AND student_id = auth.uid())
+);
+CREATE POLICY "Admins can view student answers" ON student_answers FOR SELECT USING (
+  EXISTS (SELECT 1 FROM quiz_attempts qa
+          JOIN quizzes q ON qa.quiz_id = q.id
+          WHERE qa.id = attempt_id AND q.admin_id = auth.uid())
+);
+
+-- Create functions for updated_at timestamps
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+-- Create triggers for updated_at
+CREATE TRIGGER update_profiles_updated_at BEFORE UPDATE ON profiles FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_classes_updated_at BEFORE UPDATE ON classes FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_quizzes_updated_at BEFORE UPDATE ON quizzes FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_questions_updated_at BEFORE UPDATE ON questions FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Function to generate unique codes
+CREATE OR REPLACE FUNCTION generate_unique_code(length INTEGER DEFAULT 8)
+RETURNS TEXT AS $$
+DECLARE
+  chars TEXT := 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; -- Exclude similar looking chars
+  result TEXT := '';
+  i INTEGER := 0;
+BEGIN
+  FOR i IN 1..length LOOP
+    result := result || substr(chars, floor(random() * length(chars) + 1)::INTEGER, 1);
+  END LOOP;
+  RETURN result;
+END;
+$$ LANGUAGE plpgsql; 

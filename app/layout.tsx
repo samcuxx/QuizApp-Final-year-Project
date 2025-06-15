@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import { Geist } from "next/font/google";
 import { ThemeProvider } from "next-themes";
+import { AuthProvider } from "@/lib/providers/auth-provider";
+import { ToastProvider } from "@/lib/providers/toast-provider";
+import { AuthDebug } from "@/components/debug/auth-debug";
 import "./globals.css";
 
 const defaultUrl = process.env.VERCEL_URL
@@ -9,8 +12,9 @@ const defaultUrl = process.env.VERCEL_URL
 
 export const metadata: Metadata = {
   metadataBase: new URL(defaultUrl),
-  title: "Next.js and Supabase Starter Kit",
-  description: "The fastest way to build apps with Next.js and Supabase",
+  title: "Quiz App - Professional Educational Platform",
+  description:
+    "A professional, standardized platform for educational institutions to conduct quizzes and exams.",
 };
 
 const geistSans = Geist({
@@ -33,7 +37,11 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          {children}
+          <AuthProvider>
+            {children}
+            <ToastProvider />
+            <AuthDebug />
+          </AuthProvider>
         </ThemeProvider>
       </body>
     </html>
